@@ -1,0 +1,123 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-windows:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: deps
+        run: sudo apt-get update -qq && sudo apt-get install -y mingw-w64 cmake build-essential wget unzip
+
+      - name: set version
+        id: version
+        run: echo "tag=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: get SDL2 mingw
+        run: |
+          wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-devel-2.30.3-mingw.tar.gz
+          tar xf SDL2-devel-2.30.3-mingw.tar.gz
+          sudo cp -r SDL2-2.30.3/x86_64-w64-mingw32/* /usr/x86_64-w64-mingw32/
+
+      - name: get SDL2_image mingw
+        run: |
+          wget -q https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.2/SDL2_image-devel-2.8.2-mingw.tar.gz
+          tar xf SDL2_image-devel-2.8.2-mingw.tar.gz
+          sudo cp -r SDL2_image-2.8.2/x86_64-w64-mingw32/* /usr/x86_64-w64-mingw32/
+
+      - name: get box2d
+        run: |
+          mkdir -p extern
+          git clone https://github.com/erincatto/box2d --branch v2.4.1 --depth 1 extern/box2d
+
+      - name: get imgui
+        run: |
+          git clone https://github.com/ocornut/imgui --depth 1 /tmp/imgui
+          mkdir -p extern/imgui/backends
+          cp /tmp/imgui/imgui.h                             extern/imgui/
+          cp /tmp/imgui/imgui.cpp                           extern/imgui/
+          cp /tmp/imgui/imgui_draw.cpp                      extern/imgui/
+          cp /tmp/imgui/imgui_tables.cpp                    extern/imgui/
+          cp /tmp/imgui/imgui_widgets.cpp                   extern/imgui/
+          cp /tmp/imgui/imgui_internal.h                    extern/imgui/
+          cp /tmp/imgui/imconfig.h                          extern/imgui/
+          cp /tmp/imgui/imstb_rectpack.h                    extern/imgui/
+          cp /tmp/imgui/imstb_textedit.h                    extern/imgui/
+          cp /tmp/imgui/imstb_truetype.h                    extern/imgui/
+          cp /tmp/imgui/backends/imgui_impl_sdl2.h          extern/imgui/backends/
+          cp /tmp/imgui/backends/imgui_impl_sdl2.cpp        extern/imgui/backends/
+          cp /tmp/imgui/backends/imgui_impl_opengl2.h       extern/imgui/backends/
+          cp /tmp/imgui/backends/imgui_impl_opengl2.cpp     extern/imgui/backends/
+
+      - name: write toolchain
+        run: |
+          cat > mingw-toolchain.cmake << 'EOF'
+          set(CMAKE_SYSTEM_NAME Windows)
+          set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
+          set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
+          set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
+          set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          EOF
+
+      - name: build
+        run: |
+          mkdir build-windows && cd build-windows
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=../mingw-toolchain.cmake \
+            -DSDL2_DIR=/usr/x86_64-w64-mingw32/lib/cmake/SDL2 \
+            -DSDL2_image_DIR=/usr/x86_64-w64-mingw32/lib/cmake/SDL2_image \
+            -DAPP_VERSION="${{ steps.version.outputs.tag }}"
+          make -j$(nproc)
+
+      - name: collect and zip
+        run: |
+          mkdir -p dist
+          cp build-windows/orbit_wallpaper.exe          dist/
+          cp build-windows/orbit_wallpaper_settings.exe dist/
+          cp build-windows/updater.exe                  dist/
+          cp /usr/x86_64-w64-mingw32/bin/SDL2.dll       dist/
+          cp /usr/x86_64-w64-mingw32/bin/SDL2_image.dll dist/
+          find /usr/lib/gcc/x86_64-w64-mingw32 -name "libgcc_s_seh-1.dll"  -exec cp {} dist/ \; 2>/dev/null || true
+          find /usr/lib/gcc/x86_64-w64-mingw32 -name "libstdc++-6.dll"     -exec cp {} dist/ \; 2>/dev/null || true
+          find /usr/x86_64-w64-mingw32          -name "libwinpthread-1.dll" -exec cp {} dist/ \; 2>/dev/null || true
+          cp orb*.png cube.png dist/
+          cp README.md dist/ 2>/dev/null || true
+          cd dist && zip -r ../orbit-wallpaper.zip . && cd ..
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-wallpaper
+          path: orbit-wallpaper.zip
+          retention-days: 30
+
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: orbit-wallpaper
+          path: artifacts/
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-windows.outputs.tag }}
+          name: AUTOBUILD ${{ needs.build-windows.outputs.tag }}
+          body: autofuckingbuilt
+          files: artifacts/orbit-wallpaper.zip
