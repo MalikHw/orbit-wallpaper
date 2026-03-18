@@ -1,157 +1,139 @@
-// thx github for the api
+/*
+ * updater.cpp  –  Orbit Wallpaper auto-updater
+ *
+ * Launched by the main exe after downloading orbit-update.zip.
+ * - Waits for the main process to exit (if still running)
+ * - Extracts orbit-update.zip over the install directory
+ * - Restarts orbit_wallpaper.exe
+ *
+ * Build: mingw / MSVC — no extra dependencies beyond Win32 + shell32 + ole32
+ */
+
 #include <windows.h>
-#include <winhttp.h>
-#include <urlmon.h>
+#include <shellapi.h>
 #include <shlobj.h>
-#include <shldisp.h>
 #include <stdio.h>
 #include <string.h>
-#include <tlhelp32.h>
 #include <string>
-#pragma comment(lib, "winhttp.lib")
-#pragma comment(lib, "urlmon.lib")
-#pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "oleaut32.lib")
 
-static std::string getExeDir() {
-    char buf[MAX_PATH]; GetModuleFileNameA(NULL,buf,MAX_PATH);
-    std::string s(buf); return s.substr(0,s.rfind('\\'));
+#pragma comment(lib,"shell32.lib")
+#pragma comment(lib,"ole32.lib")
+#pragma comment(lib,"oleaut32.lib")
+
+static std::string getExeDir(){
+    char buf[MAX_PATH];GetModuleFileNameA(NULL,buf,MAX_PATH);
+    std::string s(buf);return s.substr(0,s.rfind('\\'));
 }
 
-static bool downloadFile(const char* url, const char* destPath) {
-    return URLDownloadToFileA(NULL,url,destPath,0,NULL)==S_OK;
-}
-
-static bool extractZip(const char* zipPath, const char* destDir) {
-    wchar_t wzip[MAX_PATH], wdest[MAX_PATH];
-    MultiByteToWideChar(CP_ACP,0,zipPath,-1,wzip,MAX_PATH);
-    MultiByteToWideChar(CP_ACP,0,destDir,-1,wdest,MAX_PATH);
-
+static bool extractZip(const std::string& zipPath, const std::string& destDir){
+    // Use Windows Shell IShellDispatch to extract zip (no external lib needed)
     CoInitialize(NULL);
-    bool ok=false;
-    IShellDispatch* pShell=nullptr;
-    if(SUCCEEDED(CoCreateInstance(CLSID_Shell,NULL,CLSCTX_INPROC_SERVER,IID_IShellDispatch,(void**)&pShell))){
-        VARIANT vZip,vDest,vOpts;
-        VariantInit(&vZip);VariantInit(&vDest);VariantInit(&vOpts);
-        vZip.vt=VT_BSTR;  vZip.bstrVal=SysAllocString(wzip);
-        vDest.vt=VT_BSTR; vDest.bstrVal=SysAllocString(wdest);
-        vOpts.vt=VT_I4;   vOpts.lVal=4|16|256|1024;
+    IShellDispatch* pSD=nullptr;
+    if(CoCreateInstance(CLSID_Shell,NULL,CLSCTX_INPROC_SERVER,
+        IID_IShellDispatch,(void**)&pSD)!=S_OK) return false;
 
-        Folder* pDestFolder=nullptr;
-        Folder* pZipFolder=nullptr;
-        if(SUCCEEDED(pShell->NameSpace(vDest,&pDestFolder))&&pDestFolder){
-            if(SUCCEEDED(pShell->NameSpace(vZip,&pZipFolder))&&pZipFolder){
-                FolderItems* pItems=nullptr;
-                if(SUCCEEDED(pZipFolder->Items(&pItems))&&pItems){
-                    VARIANT vItems;VariantInit(&vItems);
-                    vItems.vt=VT_DISPATCH;vItems.pdispVal=pItems;
-                    ok=SUCCEEDED(pDestFolder->CopyHere(vItems,vOpts));
-                    pItems->Release();
-                }
-                pZipFolder->Release();
-            }
-            pDestFolder->Release();
+    BSTR bZip  =SysAllocStringLen(NULL,(UINT)zipPath.size());
+    BSTR bDest =SysAllocStringLen(NULL,(UINT)destDir.size());
+    MultiByteToWideChar(CP_ACP,0,zipPath.c_str(),-1,bZip,(int)zipPath.size()+1);
+    MultiByteToWideChar(CP_ACP,0,destDir.c_str(),-1,bDest,(int)destDir.size()+1);
+
+    VARIANT vZip,vDest;
+    VariantInit(&vZip);VariantInit(&vDest);
+    vZip.vt=VT_BSTR; vZip.bstrVal=bZip;
+    vDest.vt=VT_BSTR;vDest.bstrVal=bDest;
+
+    Folder* pZipFolder=nullptr;
+    Folder* pDestFolder=nullptr;
+    pSD->NameSpace(vZip,&pZipFolder);
+    pSD->NameSpace(vDest,&pDestFolder);
+
+    bool ok=false;
+    if(pZipFolder&&pDestFolder){
+        FolderItems* pItems=nullptr;
+        pZipFolder->Items(&pItems);
+        if(pItems){
+            VARIANT vItems;VariantInit(&vItems);
+            vItems.vt=VT_DISPATCH;
+            pItems->QueryInterface(IID_IDispatch,(void**)&vItems.pdispVal);
+            VARIANT vOpts;VariantInit(&vOpts);
+            vOpts.vt=VT_I4;
+            // 4=no progress, 16=yes to all, 1024=no error UI
+            vOpts.lVal=4|16|1024;
+            HRESULT hr=pDestFolder->CopyHere(vItems,vOpts);
+            ok=(hr==S_OK||hr==S_FALSE); // S_FALSE = already exists, still fine
+            // give the async copy a moment to finish
+            Sleep(2000);
+            VariantClear(&vItems);
+            pItems->Release();
         }
-        SysFreeString(vZip.bstrVal);
-        SysFreeString(vDest.bstrVal);
-        pShell->Release();
-        Sleep(2000);
+        pZipFolder->Release();
+        pDestFolder->Release();
     }
+    pSD->Release();
+    SysFreeString(bZip);SysFreeString(bDest);
     CoUninitialize();
     return ok;
 }
 
-static std::string fetchLatestTag() {
-    std::string result="";
-    HINTERNET hSession=WinHttpOpen(L"OrbitWallpaperUpdater/1.0",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
-    if(!hSession)return result;
-    HINTERNET hConnect=WinHttpConnect(hSession,L"api.github.com",INTERNET_DEFAULT_HTTPS_PORT,0);
-    if(!hConnect){WinHttpCloseHandle(hSession);return result;}
-    HINTERNET hRequest=WinHttpOpenRequest(hConnect,L"GET",
-        L"/repos/MalikHw/orbit-wallpaper/releases/latest",  // <-- wallpaper repo
-        NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);
-    if(!hRequest){WinHttpCloseHandle(hConnect);WinHttpCloseHandle(hSession);return result;}
-    WinHttpAddRequestHeaders(hRequest,L"User-Agent: OrbitWallpaperUpdater",-1,WINHTTP_ADDREQ_FLAG_ADD);
-    if(WinHttpSendRequest(hRequest,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)
-       &&WinHttpReceiveResponse(hRequest,NULL)){
-        char buf[4096]="";DWORD read=0;
-        WinHttpReadData(hRequest,buf,sizeof(buf)-1,&read);buf[read]=0;
-        const char* p=strstr(buf,"\"tag_name\":");
-        if(p){p+=11;while(*p=='"'||*p==' ')p++;char tag[64]="";int i=0;while(*p&&*p!='"'&&i<63)tag[i++]=*p++;tag[i]=0;result=tag;}
+static void killRunningInstance(){
+    // find any running orbit_wallpaper.exe and wait for it to die
+    HANDLE snap=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    if(snap==INVALID_HANDLE_VALUE)return;
+    PROCESSENTRY32 pe;pe.dwSize=sizeof(pe);
+    if(Process32First(snap,&pe)){
+        do {
+            if(_stricmp(pe.szExeFile,"orbit_wallpaper.exe")==0){
+                HANDLE h=OpenProcess(SYNCHRONIZE|PROCESS_TERMINATE,FALSE,pe.th32ProcessID);
+                if(h){
+                    TerminateProcess(h,0);
+                    WaitForSingleObject(h,5000);
+                    CloseHandle(h);
+                }
+            }
+        } while(Process32Next(snap,&pe));
     }
-    WinHttpCloseHandle(hRequest);WinHttpCloseHandle(hConnect);WinHttpCloseHandle(hSession);
-    return result;
+    CloseHandle(snap);
 }
 
 int WINAPI WinMain(HINSTANCE,HINSTANCE,LPSTR,int){
     std::string exeDir=getExeDir();
-
-    // wait for wallpaper process to close
-    for(int i=0;i<60;i++){
-        HANDLE snap=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
-        bool found=false;
-        if(snap!=INVALID_HANDLE_VALUE){
-            PROCESSENTRY32 pe;pe.dwSize=sizeof(pe);
-            if(Process32First(snap,&pe)){
-                do{
-                    if(_stricmp(pe.szExeFile,"orbit_wallpaper.exe")==0){found=true;break;}
-                }while(Process32Next(snap,&pe));
-            }
-            CloseHandle(snap);
-        }
-        if(!found)break;
-        Sleep(500);
-    }
-
-    // zip was already downloaded by wallpaper_settings.cpp
     std::string zipPath=exeDir+"\\orbit-update.zip";
 
-    // fallback: if zip not there, download it ourselves
+    // check zip exists
     if(GetFileAttributesA(zipPath.c_str())==INVALID_FILE_ATTRIBUTES){
-        std::string tag=fetchLatestTag();
-        if(tag.empty()){
-            MessageBoxA(NULL,"Failed to fetch latest version info.\nCheck your internet connection.",
-                        "Orbit Wallpaper Updater",MB_OK|MB_ICONERROR);
-            return 1;
-        }
-        // wallpaper update zip lives at orbit-wallpaper repo releases
-        std::string zipUrl="https://github.com/MalikHw/orbit-wallpaper/releases/download/"+tag+"/orbit-wallpaper.zip";
-        if(!downloadFile(zipUrl.c_str(),zipPath.c_str())){
-            MessageBoxA(NULL,"Failed to download update.\nCheck your internet connection.",
-                        "Orbit Wallpaper Updater",MB_OK|MB_ICONERROR);
-            return 1;
-        }
-    }
-
-    // extract to temp folder
-    std::string tmpDir=exeDir+"\\orbit-update-tmp";
-    CreateDirectoryA(tmpDir.c_str(),NULL);
-
-    if(!extractZip(zipPath.c_str(),tmpDir.c_str())){
-        MessageBoxA(NULL,"Failed to extract update.","Orbit Wallpaper Updater",MB_OK|MB_ICONERROR);
+        MessageBoxA(NULL,"orbit-update.zip not found!\nNothing to update.","Orbit Updater",MB_ICONERROR);
         return 1;
     }
-    DeleteFileA(zipPath.c_str());
 
-    // copy files; updater.exe -> updater.exe.pending (same trick as screensaver)
-    WIN32_FIND_DATAA fd;
-    std::string pattern=tmpDir+"\\*";
-    HANDLE hFind=FindFirstFileA(pattern.c_str(),&fd);
-    if(hFind!=INVALID_HANDLE_VALUE){
-        do {
-            if(fd.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)continue;
-            std::string src=tmpDir+"\\"+fd.cFileName;
-            std::string dst;
-            if(_stricmp(fd.cFileName,"updater.exe")==0)
-                dst=exeDir+"\\updater.exe.pending";
-            else
-                dst=exeDir+"\\"+fd.cFileName;
-            MoveFileExA(src.c_str(),dst.c_str(),MOVEFILE_REPLACE_EXISTING);
-        } while(FindNextFileA(hFind,&fd));
-        FindClose(hFind);
+    // kill running instance
+    killRunningInstance();
+    Sleep(500);
+
+    // backup updater itself before extraction overwrites it
+    std::string selfPath=exeDir+"\\updater.exe";
+    std::string selfBak =exeDir+"\\updater.exe.bak";
+    CopyFileA(selfPath.c_str(),selfBak.c_str(),FALSE);
+
+    // extract
+    if(!extractZip(zipPath,exeDir)){
+        MessageBoxA(NULL,"Failed to extract update.\nTry extracting orbit-update.zip manually.","Orbit Updater",MB_ICONERROR);
+        return 1;
     }
-    RemoveDirectoryA(tmpDir.c_str());
 
-    return 0; // silent
+    // rename new updater if it landed as .pending (shouldn't on clean zip, but just in case)
+    std::string pending=exeDir+"\\updater.exe.pending";
+    if(GetFileAttributesA(pending.c_str())!=INVALID_FILE_ATTRIBUTES){
+        DeleteFileA(selfPath.c_str());
+        MoveFileA(pending.c_str(),selfPath.c_str());
+    }
+
+    // clean up zip
+    DeleteFileA(zipPath.c_str());
+    DeleteFileA(selfBak.c_str());
+
+    // restart main exe
+    std::string mainExe=exeDir+"\\orbit_wallpaper.exe";
+    ShellExecuteA(NULL,"open",mainExe.c_str(),NULL,exeDir.c_str(),SW_SHOW);
+
+    return 0;
 }

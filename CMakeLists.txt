@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(orbit_screensaver)
+project(orbit_wallpaper)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -s")
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -26,69 +26,41 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_opengl2.cpp
 )
 
-# -----------------------------------------------------------------------
-# 1. Screensaver (unchanged)
-# -----------------------------------------------------------------------
-add_executable(orbit_screensaver WIN32 main.cpp ${IMGUI_SOURCES})
-if(EXISTS "${CMAKE_SOURCE_DIR}/icon.rc")
-    target_sources(orbit_screensaver PRIVATE icon.rc)
-endif()
-target_include_directories(orbit_screensaver PRIVATE
-    ${SDL2_INCLUDE_DIRS} ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-target_link_libraries(orbit_screensaver PRIVATE
-    ${SDL2_LIBRARIES} SDL2_image::SDL2_image box2d
-    opengl32 shell32 comdlg32 gdi32 winmm advapi32 winhttp urlmon)
-set_target_properties(orbit_screensaver PROPERTIES
-    OUTPUT_NAME "orbit_screensaver" SUFFIX ".scr")
-
-# -----------------------------------------------------------------------
-# 2. Wallpaper process  (no ImGui, no settings UI, just the renderer)
-# -----------------------------------------------------------------------
-add_executable(orbit_wallpaper WIN32 wallpaper.cpp)
+# ── main wallpaper exe ────────────────────────────────────────────────────────
+add_executable(orbit_wallpaper WIN32 main.cpp ${IMGUI_SOURCES})
 if(EXISTS "${CMAKE_SOURCE_DIR}/icon.rc")
     target_sources(orbit_wallpaper PRIVATE icon.rc)
 endif()
-target_include_directories(orbit_wallpaper PRIVATE ${SDL2_INCLUDE_DIRS})
+target_include_directories(orbit_wallpaper PRIVATE
+    ${SDL2_INCLUDE_DIRS}
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends)
 target_link_libraries(orbit_wallpaper PRIVATE
-    ${SDL2_LIBRARIES} SDL2_image::SDL2_image box2d
-    opengl32 shell32 gdi32 winmm advapi32)
-set_target_properties(orbit_wallpaper PROPERTIES OUTPUT_NAME "orbit_wallpaper")
+    ${SDL2_LIBRARIES}
+    SDL2_image::SDL2_image
+    box2d
+    opengl32
+    shell32 comdlg32 gdi32 winmm advapi32 winhttp urlmon
+    ole32 oleaut32 uuid)
+set_target_properties(orbit_wallpaper PROPERTIES
+    OUTPUT_NAME "orbit_wallpaper"
+    SUFFIX ".exe")
 
-# -----------------------------------------------------------------------
-# 3. Wallpaper settings UI  (ImGui, same look as screensaver settings)
-# -----------------------------------------------------------------------
-add_executable(orbit_wallpaper_settings WIN32 wallpaper_settings.cpp ${IMGUI_SOURCES})
-if(EXISTS "${CMAKE_SOURCE_DIR}/icon.rc")
-    target_sources(orbit_wallpaper_settings PRIVATE icon.rc)
-endif()
-target_include_directories(orbit_wallpaper_settings PRIVATE
-    ${SDL2_INCLUDE_DIRS} ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-target_link_libraries(orbit_wallpaper_settings PRIVATE
-    ${SDL2_LIBRARIES} SDL2_image::SDL2_image
-    opengl32 shell32 comdlg32 gdi32 winmm advapi32 winhttp urlmon ole32 oleaut32)
-set_target_properties(orbit_wallpaper_settings PROPERTIES
-    OUTPUT_NAME "orbit_wallpaper_settings")
-
-# -----------------------------------------------------------------------
-# 4. Updater (unchanged)
-# -----------------------------------------------------------------------
+# ── updater ───────────────────────────────────────────────────────────────────
 add_executable(updater WIN32 updater.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/icon.rc")
     target_sources(updater PRIVATE icon.rc)
 endif()
-target_link_libraries(updater PRIVATE shell32 winhttp advapi32 ole32 oleaut32 urlmon)
+target_link_libraries(updater PRIVATE
+    shell32 ole32 oleaut32 uuid advapi32)
 set_target_properties(updater PROPERTIES OUTPUT_NAME "updater")
 
-# -----------------------------------------------------------------------
-# Copy assets after screensaver build
-# -----------------------------------------------------------------------
-foreach(ASSET orb1.png orb2.png orb3.png orb4.png orb5.png
-              orb6.png orb7.png orb8.png orb9.png orb10.png cube.png)
+# ── copy assets post-build ────────────────────────────────────────────────────
+foreach(ASSET
+    orb1.png orb2.png orb3.png orb4.png orb5.png
+    orb6.png orb7.png orb8.png orb9.png orb10.png
+    cube.png)
     if(EXISTS "${CMAKE_SOURCE_DIR}/${ASSET}")
-        add_custom_command(TARGET orbit_screensaver POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_SOURCE_DIR}/${ASSET}"
-                "$<TARGET_FILE_DIR:orbit_screensaver>/${ASSET}")
         add_custom_command(TARGET orbit_wallpaper POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/${ASSET}"
