@@ -1,17 +1,7 @@
-/*
- * updater.cpp  –  Orbit Wallpaper auto-updater
- *
- * Launched by the main exe after downloading orbit-update.zip.
- * - Waits for the main process to exit (if still running)
- * - Extracts orbit-update.zip over the install directory
- * - Restarts orbit_wallpaper.exe
- *
- * Build: mingw / MSVC — no extra dependencies beyond Win32 + shell32 + ole32
- */
-
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <tlhelp32.h>
 #include <stdio.h>
 #include <string.h>
 #include <string>
