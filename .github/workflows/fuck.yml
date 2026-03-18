@@ -84,23 +84,26 @@ jobs:
       - name: collect and zip
         run: |
           mkdir -p dist
-          cp build-windows/orbit_wallpaper.exe          dist/
-          cp build-windows/orbit_wallpaper_settings.exe dist/
-          cp build-windows/updater.exe                  dist/
+          cp build-windows/orbit_wallpaper.exe dist/
+          cp build-windows/updater.exe         dist/
           cp /usr/x86_64-w64-mingw32/bin/SDL2.dll       dist/
           cp /usr/x86_64-w64-mingw32/bin/SDL2_image.dll dist/
           find /usr/lib/gcc/x86_64-w64-mingw32 -name "libgcc_s_seh-1.dll"  -exec cp {} dist/ \; 2>/dev/null || true
           find /usr/lib/gcc/x86_64-w64-mingw32 -name "libstdc++-6.dll"     -exec cp {} dist/ \; 2>/dev/null || true
           find /usr/x86_64-w64-mingw32          -name "libwinpthread-1.dll" -exec cp {} dist/ \; 2>/dev/null || true
           cp orb*.png cube.png dist/
-          cp README.md dist/ 2>/dev/null || true
+          cp README.txt dist/ 2>/dev/null || true
+          # two zips: orbit-wallpaper for new users, orbit-update for auto-updater
           cd dist && zip -r ../orbit-wallpaper.zip . && cd ..
+          cp orbit-wallpaper.zip orbit-update.zip
 
       - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: orbit-wallpaper
-          path: orbit-wallpaper.zip
+          path: |
+            orbit-wallpaper.zip
+            orbit-update.zip
           retention-days: 30
 
   release:
@@ -120,4 +123,6 @@ jobs:
           tag_name: ${{ needs.build-windows.outputs.tag }}
           name: AUTOBUILD ${{ needs.build-windows.outputs.tag }}
           body: autofuckingbuilt
-          files: artifacts/orbit-wallpaper.zip
+          files: |
+            artifacts/orbit-wallpaper.zip
+            artifacts/orbit-update.zip
