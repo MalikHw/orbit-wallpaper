@@ -256,7 +256,7 @@ static MesaDownloadState* g_mesaDL=nullptr;
 static void startMesaDownload(){
     g_mesaDL=new MesaDownloadState();
     g_mesaDL->progress=0.0f; g_mesaDL->done=0;
-    g_mesaDL->url="https://github.com/MalikHw/orbit-wallpaper/releases/download/mesa3d/opengl32.dll";
+    g_mesaDL->url="https://github.com/MalikHw/orbit-screensaver/releases/download/mesa3d/opengl32.dll";
     g_mesaDL->destPath=getExeDir()+"\\opengl32.dll";
     CreateThread(NULL,0,mesaThread,g_mesaDL,0,NULL);
 }
